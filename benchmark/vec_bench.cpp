@@ -7,6 +7,10 @@
 
 using namespace vecplay;
 
+bool verify_checksum(float computed, float expected, float tol = 1e-5f) {
+  return std::abs(computed - expected) <= tol;
+}
+
 struct Args {
   std::string kernel        = "saxpy";
   std::string variant       = "auto";

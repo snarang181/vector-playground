@@ -12,43 +12,104 @@
 #endif
 
 namespace {
-// UNROLL = how many 4-lane vectors to process per loop iteration.
-// Effective computation per iteration = UNROLL * 4 elements.
-template <int UNROLL>
-static void saxpy_manual_impl(float *y, const float *x, float a, std::size_t n) {
+// Unroll = 1 → 4 elements per iteration
+static void saxpy_manual_unroll1(float *y, const float *x, float a, std::size_t n) {
 #if VECPLAY_HAS_NEON
-  static_assert(UNROLL >= 1, "Unroll factor must be at least 1");
-
   std::size_t i     = 0;
-  float32x4_t a_vec = vdupq_n_f32(a); // Duplicate
+  float32x4_t a_vec = vdupq_n_f32(a);
 
-  const std::size_t vec_width  = 4;
-  const std::size_t step_elems = UNROLL * vec_width;
-
-  std::size_t limit = n / step_elems * step_elems; // Process in chunks of UNROLL * 4
-  for (; i < limit; i += step_elems) {
-    float32x4_t x_vec[UNROLL];
-    float32x4_t y_vec[UNROLL];
-
-// Manual unrolling
-#pragma clang loop unroll(disable) // Disable automatic unrolling
-    for (int u = 0; u < UNROLL; ++u) {
-      std::size_t base = i + u * vec_width; // Base index for this unroll
-      x_vec[u]         = vld1q_f32(&x[base]);
-      y_vec[u]         = vld1q_f32(&y[base]);
-      // Source-destructive multiply-accumulate
-      y_vec[u] = vmlaq_f32(y_vec[u], x_vec[u], a_vec);
-      // Store results back to y
-      vst1q_f32(&y[base], y_vec[u]);
-    }
+  std::size_t limit = n & ~3u; // multiple of 4
+  for (; i < limit; i += 4) {
+    float32x4_t x0 = vld1q_f32(&x[i]);
+    float32x4_t y0 = vld1q_f32(&y[i]);
+    y0             = vmlaq_f32(y0, x0, a_vec);
+    vst1q_f32(&y[i], y0);
   }
-  // Handle remaining elements
+
+  // scalar tail
   for (; i < n; ++i) {
     y[i] = a * x[i] + y[i];
   }
 #else
-  // Fallback to scalar if Neon is not available
-  saxpy_scalar(y, x, a, n);
+  (void) y;
+  (void) x;
+  (void) a;
+  (void) n;
+#endif
+}
+// Unroll = 2 → 8 elements per iteration (your earlier good kernel)
+static void saxpy_manual_unroll2(float *y, const float *x, float a, std::size_t n) {
+#if VECPLAY_HAS_NEON
+  std::size_t i     = 0;
+  float32x4_t a_vec = vdupq_n_f32(a);
+
+  // process in chunks of 8
+  std::size_t limit = n & ~7u; // multiple of 8
+  for (; i < limit; i += 8) {
+    float32x4_t x0 = vld1q_f32(&x[i]);
+    float32x4_t y0 = vld1q_f32(&y[i]);
+    float32x4_t x1 = vld1q_f32(&x[i + 4]);
+    float32x4_t y1 = vld1q_f32(&y[i + 4]);
+
+    y0 = vmlaq_f32(y0, x0, a_vec);
+    y1 = vmlaq_f32(y1, x1, a_vec);
+
+    vst1q_f32(&y[i], y0);
+    vst1q_f32(&y[i + 4], y1);
+  }
+
+  // scalar tail
+  for (; i < n; ++i) {
+    y[i] = a * x[i] + y[i];
+  }
+#else
+  (void) y;
+  (void) x;
+  (void) a;
+  (void) n;
+#endif
+}
+// Unroll = 4 → 16 elements per iteration (match auto’s width)
+static void saxpy_manual_unroll4(float *y, const float *x, float a, std::size_t n) {
+#if VECPLAY_HAS_NEON
+  std::size_t i     = 0;
+  float32x4_t a_vec = vdupq_n_f32(a);
+
+  // process in chunks of 16
+  std::size_t limit = n & ~15u; // multiple of 16
+  for (; i < limit; i += 16) {
+    float32x4_t x0 = vld1q_f32(&x[i]);
+    float32x4_t y0 = vld1q_f32(&y[i]);
+
+    float32x4_t x1 = vld1q_f32(&x[i + 4]);
+    float32x4_t y1 = vld1q_f32(&y[i + 4]);
+
+    float32x4_t x2 = vld1q_f32(&x[i + 8]);
+    float32x4_t y2 = vld1q_f32(&y[i + 8]);
+
+    float32x4_t x3 = vld1q_f32(&x[i + 12]);
+    float32x4_t y3 = vld1q_f32(&y[i + 12]);
+
+    y0 = vmlaq_f32(y0, x0, a_vec);
+    y1 = vmlaq_f32(y1, x1, a_vec);
+    y2 = vmlaq_f32(y2, x2, a_vec);
+    y3 = vmlaq_f32(y3, x3, a_vec);
+
+    vst1q_f32(&y[i], y0);
+    vst1q_f32(&y[i + 4], y1);
+    vst1q_f32(&y[i + 8], y2);
+    vst1q_f32(&y[i + 12], y3);
+  }
+
+  // scalar tail
+  for (; i < n; ++i) {
+    y[i] = a * x[i] + y[i];
+  }
+#else
+  (void) y;
+  (void) x;
+  (void) a;
+  (void) n;
 #endif
 }
 } // namespace
@@ -94,20 +155,17 @@ void saxpy_manual_unrolled(float *y, const float *x, float a, std::size_t n, int
 #if VECPLAY_HAS_NEON
     switch (unroll_factor) {
     case 1:
-        saxpy_manual_impl<1>(y, x, a, n);
+        saxpy_manual_unroll1(y, x, a, n);
         break;
     case 2:
-        saxpy_manual_impl<2>(y, x, a, n);
+        saxpy_manual_unroll2(y, x, a, n);
         break;
     case 4:
-        saxpy_manual_impl<4>(y, x, a, n);
-        break;
-    case 8:
-        saxpy_manual_impl<8>(y, x, a, n);
+        saxpy_manual_unroll4(y, x, a, n);
         break;
     default:
         // Fallback to unroll factor of 2 if unsupported
-        saxpy_manual_impl<2>(y, x, a, n);
+        saxpy_manual_unroll2(y, x, a, n);
         break;
     }
 #else
