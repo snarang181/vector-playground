@@ -1,0 +1,42 @@
+// Template for .gitignore
+
+# Compiled object files
+*.o
+*.obj
+# Precompiled Headers
+*.gch
+*.pch
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+# Executables
+*.exe
+*.out
+*.app
+# Debug files
+*.dSYM/
+# IDE files
+*.vscode/
+*.code-workspace
+*.idea/
+*.sublime-project
+*.sublime-workspace
+# Build directories
+/build/
+/bin/
+/Debug/
+/Release/
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+# Other
+*.log
